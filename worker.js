@@ -102,3 +102,7 @@ async function handleRequest(request) {
   // If all attempts fail, return 502
   return new Response("Bad Gateway: All origins failed", { status: 502 });
 }
+
+addEventListener("fetch", (event) => {
+  event.respondWith(handleRequest(event.request));
+});
