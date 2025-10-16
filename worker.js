@@ -1,52 +1,104 @@
-
-// Cloudflare Worker: Custom Load Balancer Example
-// This Worker proxies requests to multiple origin servers using round-robin load balancing.
-// Update the ORIGIN_SERVERS array with your origin server URLs.
+// Cloudflare Worker: Advanced Load Balancer Example
+// This Worker proxies requests to multiple origin servers with support for weighted routing, backup origins, and disabled origins.
+// Update the ORIGINS array with your origin server configurations.
 // References:
 // - https://developers.cloudflare.com/workers/examples/load-balancer/
 // - https://developers.cloudflare.com/workers/runtime-apis/fetch/
 
-const ORIGIN_SERVERS = [
-	'https://server1.example.com',
-	'https://server2.example.com',
-	'https://server3.example.com',
+/**
+ * List of origin server configurations.
+ * - url: string (origin URL)
+ * - weight: number (relative traffic weight, default 1)
+ * - backup: boolean (true if backup, default false)
+ * - enabled: boolean (true if enabled, default true)
+ */
+const ORIGINS = [
+  {
+    url: "https://server1.example.com",
+    weight: 3,
+    backup: false,
+    enabled: true,
+  },
+  {
+    url: "https://server2.example.com",
+    weight: 1,
+    backup: false,
+    enabled: true,
+  },
+  {
+    url: "https://server3.example.com",
+    weight: 1,
+    backup: true,
+    enabled: true,
+  },
+  // Add more origins as needed
 ];
 
-// Use a global index for round-robin (not perfect, but works for most cases)
-let currentIndex = 0;
-
-addEventListener('fetch', event => {
-	event.respondWith(handleRequest(event.request));
-});
+/**
+ * Selects an origin using weighted random selection.
+ * @param {Array} origins - Array of origin objects
+ * @returns {Object} Selected origin object
+ */
+function selectWeightedRandomOrigin(origins) {
+  const totalWeight = origins.reduce((sum, o) => sum + (o.weight || 1), 0);
+  let r = Math.random() * totalWeight;
+  for (const origin of origins) {
+    r -= origin.weight || 1;
+    if (r < 0) return origin;
+  }
+  // Fallback (should not happen)
+  return origins[0];
+}
 
 /**
- * Proxies the request to one of the origin servers using round-robin.
+ * Attempts to proxy the request to a list of origins, trying backups if needed.
  * @param {Request} request
  * @returns {Promise<Response>}
  */
 async function handleRequest(request) {
-	// Select origin using round-robin
-	const origin = ORIGIN_SERVERS[currentIndex % ORIGIN_SERVERS.length];
-	currentIndex++;
+  // Filter enabled, non-backup origins
+  let primaries = ORIGINS.filter(
+    (o) => o.enabled !== false && o.backup !== true
+  );
+  let backups = ORIGINS.filter((o) => o.enabled !== false && o.backup === true);
 
-	// Construct the new URL for the origin
-	const url = new URL(request.url);
-	const originUrl = origin + url.pathname + url.search;
+  // Try primaries first, then backups if all primaries fail
+  let triedOrigins = new Set();
+  let lastError = null;
 
-	// Clone the request and update the destination
-	const init = {
-		method: request.method,
-		headers: request.headers,
-		body: request.body,
-		redirect: 'follow',
-	};
+  for (let phase = 0; phase < 2; phase++) {
+    let pool = phase === 0 ? primaries : backups;
+    let attempts = pool.length;
+    for (let i = 0; i < attempts; i++) {
+      // Select an origin not yet tried
+      let available = pool.filter((o) => !triedOrigins.has(o.url));
+      if (available.length === 0) break;
+      let origin = selectWeightedRandomOrigin(available);
+      triedOrigins.add(origin.url);
 
-	try {
-		const response = await fetch(originUrl, init);
-		// Optionally, you can modify the response here
-		return response;
-	} catch (err) {
-		// If the origin is unreachable, return a 502 error
-		return new Response('Bad Gateway', { status: 502 });
-	}
+      // Build the proxied URL
+      const url = new URL(request.url);
+      const originUrl = origin.url + url.pathname + url.search;
+
+      // Clone the request for fetch
+      const init = {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        redirect: "follow",
+      };
+
+      try {
+        const response = await fetch(originUrl, init);
+        // Optionally, you can modify the response here
+        return response;
+      } catch (err) {
+        lastError = err;
+        // Try next origin
+      }
+    }
+  }
+
+  // If all attempts fail, return 502
+  return new Response("Bad Gateway: All origins failed", { status: 502 });
 }
