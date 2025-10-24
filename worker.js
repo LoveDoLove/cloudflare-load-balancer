@@ -1,17 +1,15 @@
 /**
- * Cloudflare Worker: Advanced Load Balancer
+ * Cloudflare Worker: Lightweight Load Balancer
  *
- * This Worker implements a load balancer that proxies HTTP requests to multiple origin servers.
- * Features include weighted routing, backup origin support, and dynamic origin enablement.
+ * Proxies HTTP requests to multiple origin servers with weighted routing and failover.
+ * Forwards all headers and cookies, with minimal processing for stability and maintainability.
  *
- * To configure, update the ORIGINS array with the desired origin server details.
- *
- * Documentation:
- * - Cloudflare Workers Load Balancer Example: https://developers.cloudflare.com/workers/examples/load-balancer/
- * - Cloudflare Workers Fetch API: https://developers.cloudflare.com/workers/runtime-apis/fetch/
+ * References:
+ * - https://developers.cloudflare.com/workers/examples/load-balancer/
+ * - https://developers.cloudflare.com/workers/runtime-apis/fetch/
  *
  * Copyright (c) 2025 LoveDoLove
- * Licensed under the MIT License. See LICENSE file in the project root for full license information.
+ * Licensed under the MIT License.
  */
 
 /**
@@ -60,85 +58,104 @@ const ORIGINS = [
  * @returns {Object} The selected origin configuration object.
  */
 function selectWeightedRandomOrigin(origins) {
+  // Weighted random selection for load balancing
   const totalWeight = origins.reduce((sum, o) => sum + (o.weight || 1), 0);
   let r = Math.random() * totalWeight;
   for (const origin of origins) {
     r -= origin.weight || 1;
     if (r < 0) return origin;
   }
-  // Fallback (should not happen)
   return origins[0];
-}
+  // End of file
 
-/**
- * Proxies the incoming HTTP request to one of the configured origin servers.
- *
- * The function first attempts to route the request to enabled primary origins using weighted selection.
- * If all primary origins fail, it retries with enabled backup origins.
- * For each attempt, the request body is cloned and headers are sanitized to ensure compatibility.
- *
- * @param {Request} request - The incoming HTTP request object.
- * @returns {Promise<Response>} The proxied response from the selected origin, or a 502 error if all origins fail.
- */
-async function handleRequest(request) {
-  // Filter enabled, non-backup origins
-  let primaries = ORIGINS.filter(
-    (o) => o.enabled !== false && o.backup !== true
-  );
-  let backups = ORIGINS.filter((o) => o.enabled !== false && o.backup === true);
+  function sanitizeHeaders(headers) {
+    // Remove hop-by-hop headers and those that may cause issues
+    const h = new Headers(headers);
+    h.delete("host");
+    h.delete("content-length");
+    h.delete("accept-encoding");
+    return h;
+  }
 
-  // Try primaries first, then backups if all primaries fail
-  let triedOrigins = new Set();
-  let lastError = null;
-
-  for (let phase = 0; phase < 2; phase++) {
-    let pool = phase === 0 ? primaries : backups;
-    let attempts = pool.length;
-    for (let i = 0; i < attempts; i++) {
-      // Select an origin not yet tried
-      let available = pool.filter((o) => !triedOrigins.has(o.url));
-      if (available.length === 0) break;
-      let origin = selectWeightedRandomOrigin(available);
-      triedOrigins.add(origin.url);
-
-      // Build the proxied URL
-      const url = new URL(request.url);
-      const originUrl = origin.url + url.pathname + url.search;
-
-      // Clone and sanitize headers for proxying
-      const headers = new Headers(request.headers);
-      headers.delete("host");
-      headers.delete("content-length");
-      headers.delete("accept-encoding");
-
-      // Clone the request body for each attempt
-      let body = null;
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        // Read the body as an ArrayBuffer and recreate for each fetch
-        body = await request.arrayBuffer();
-      }
-
-      // Reconstruct the Request for fetch
-      const fetchInit = {
-        method: request.method,
-        headers,
-        body: body,
-        redirect: "follow",
-      };
-
-      try {
-        const response = await fetch(originUrl, fetchInit);
-        // Optionally, you can modify the response here
-        return response;
-      } catch (err) {
-        lastError = err;
-        // Try next origin
+  function forwardSetCookieHeaders(originHeaders, targetHeaders) {
+    // Forward all Set-Cookie headers explicitly (required by Cloudflare Workers)
+    for (const [key, value] of originHeaders.entries()) {
+      if (key.toLowerCase() === "set-cookie") {
+        targetHeaders.append("Set-Cookie", value);
       }
     }
   }
 
-  // If all attempts fail, return 502
-  return new Response("Bad Gateway: All origins failed", { status: 502 });
+  /**
+   * Proxies the incoming HTTP request to one of the configured origin servers.
+   *
+   * The function first attempts to route the request to enabled primary origins using weighted selection.
+   * If all primary origins fail, it retries with enabled backup origins.
+   * For each attempt, the request body is cloned and headers are sanitized to ensure compatibility.
+   *
+   * @param {Request} request - The incoming HTTP request object.
+   * @returns {Promise<Response>} The proxied response from the selected origin, or a 502 error if all origins fail.
+   */
+  async function handleRequest(request) {
+    // Get host to prevent proxying to self
+    const workerHostname = new URL(request.url).hostname;
+    const filterOrigins = (backup) =>
+      ORIGINS.filter(
+        (o) =>
+          o.enabled !== false &&
+          o.backup === !!backup &&
+          new URL(o.url).hostname !== workerHostname
+      );
+    const primaries = filterOrigins(false);
+    const backups = filterOrigins(true);
+
+    let tried = new Set();
+    let lastError = null;
+    for (const pool of [primaries, backups]) {
+      for (let i = 0; i < pool.length; i++) {
+        const available = pool.filter((o) => !tried.has(o.url));
+        if (!available.length) break;
+        const origin = selectWeightedRandomOrigin(available);
+        tried.add(origin.url);
+        const url = new URL(request.url);
+        const originUrl = origin.url + url.pathname + url.search;
+        const headers = sanitizeHeaders(request.headers);
+        let body = null;
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          body = await request.arrayBuffer();
+        }
+        const fetchInit = {
+          method: request.method,
+          headers,
+          body,
+          redirect: "follow",
+        };
+        try {
+          const resp = await fetch(originUrl, fetchInit);
+          // Forward all headers and cookies
+          if (
+            [...resp.headers.keys()].some(
+              (k) => k.toLowerCase() === "set-cookie"
+            )
+          ) {
+            const outHeaders = new Headers(resp.headers);
+            outHeaders.delete("set-cookie");
+            forwardSetCookieHeaders(resp.headers, outHeaders);
+            return new Response(resp.body, {
+              status: resp.status,
+              statusText: resp.statusText,
+              headers: outHeaders,
+            });
+          }
+          return resp;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+    }
+    // All attempts failed
+    return new Response("Bad Gateway: All origins failed", { status: 502 });
+  }
 }
 
 /**
@@ -146,6 +163,7 @@ async function handleRequest(request) {
  *
  * Listens for fetch events and responds by invoking the load balancer handler.
  */
-addEventListener("fetch", (event) => {
+// Worker entry point
+self.addEventListener("fetch", (event) => {
   event.respondWith(handleRequest(event.request));
 });
