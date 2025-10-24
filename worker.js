@@ -80,16 +80,29 @@ async function handleRequest(request) {
       const url = new URL(request.url);
       const originUrl = origin.url + url.pathname + url.search;
 
-      // Clone the request for fetch
-      const init = {
+      // Clone and sanitize headers for proxying
+      const headers = new Headers(request.headers);
+      headers.delete("host");
+      headers.delete("content-length");
+      headers.delete("accept-encoding");
+
+      // Clone the request body for each attempt
+      let body = null;
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        // Read the body as an ArrayBuffer and recreate for each fetch
+        body = await request.arrayBuffer();
+      }
+
+      // Reconstruct the Request for fetch
+      const fetchInit = {
         method: request.method,
-        headers: request.headers,
-        body: request.body,
+        headers,
+        body: body,
         redirect: "follow",
       };
 
       try {
-        const response = await fetch(originUrl, init);
+        const response = await fetch(originUrl, fetchInit);
         // Optionally, you can modify the response here
         return response;
       } catch (err) {
