@@ -1,16 +1,35 @@
-// Cloudflare Worker: Advanced Load Balancer Example
-// This Worker proxies requests to multiple origin servers with support for weighted routing, backup origins, and disabled origins.
-// Update the ORIGINS array with your origin server configurations.
-// References:
-// - https://developers.cloudflare.com/workers/examples/load-balancer/
-// - https://developers.cloudflare.com/workers/runtime-apis/fetch/
+/**
+ * Cloudflare Worker: Advanced Load Balancer
+ *
+ * This Worker implements a load balancer that proxies HTTP requests to multiple origin servers.
+ * Features include weighted routing, backup origin support, and dynamic origin enablement.
+ *
+ * To configure, update the ORIGINS array with the desired origin server details.
+ *
+ * Documentation:
+ * - Cloudflare Workers Load Balancer Example: https://developers.cloudflare.com/workers/examples/load-balancer/
+ * - Cloudflare Workers Fetch API: https://developers.cloudflare.com/workers/runtime-apis/fetch/
+ *
+ * Copyright (c) 2025 LoveDoLove
+ * Licensed under the MIT License. See LICENSE file in the project root for full license information.
+ */
 
 /**
- * List of origin server configurations.
- * - url: string (origin URL)
- * - weight: number (relative traffic weight, default 1)
- * - backup: boolean (true if backup, default false)
- * - enabled: boolean (true if enabled, default true)
+ * Array of origin server configuration objects.
+ *
+ * Each object must contain:
+ *   - url: The origin server URL (string).
+ *   - weight: Relative traffic weight for load balancing (number, default: 1).
+ *   - backup: Indicates if the origin is a backup (boolean, default: false).
+ *   - enabled: Indicates if the origin is active (boolean, default: true).
+ *
+ * Example:
+ * {
+ *   url: "https://server1.example.com",
+ *   weight: 3,
+ *   backup: false,
+ *   enabled: true
+ * }
  */
 const ORIGINS = [
   {
@@ -35,9 +54,10 @@ const ORIGINS = [
 ];
 
 /**
- * Selects an origin using weighted random selection.
- * @param {Array} origins - Array of origin objects
- * @returns {Object} Selected origin object
+ * Selects an origin server from the provided array using weighted random selection.
+ *
+ * @param {Array<Object>} origins - Array of origin configuration objects.
+ * @returns {Object} The selected origin configuration object.
  */
 function selectWeightedRandomOrigin(origins) {
   const totalWeight = origins.reduce((sum, o) => sum + (o.weight || 1), 0);
@@ -51,9 +71,14 @@ function selectWeightedRandomOrigin(origins) {
 }
 
 /**
- * Attempts to proxy the request to a list of origins, trying backups if needed.
- * @param {Request} request
- * @returns {Promise<Response>}
+ * Proxies the incoming HTTP request to one of the configured origin servers.
+ *
+ * The function first attempts to route the request to enabled primary origins using weighted selection.
+ * If all primary origins fail, it retries with enabled backup origins.
+ * For each attempt, the request body is cloned and headers are sanitized to ensure compatibility.
+ *
+ * @param {Request} request - The incoming HTTP request object.
+ * @returns {Promise<Response>} The proxied response from the selected origin, or a 502 error if all origins fail.
  */
 async function handleRequest(request) {
   // Filter enabled, non-backup origins
@@ -116,6 +141,11 @@ async function handleRequest(request) {
   return new Response("Bad Gateway: All origins failed", { status: 502 });
 }
 
+/**
+ * Cloudflare Worker entry point.
+ *
+ * Listens for fetch events and responds by invoking the load balancer handler.
+ */
 addEventListener("fetch", (event) => {
   event.respondWith(handleRequest(event.request));
 });
