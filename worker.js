@@ -124,24 +124,35 @@ const CONFIG = {
   // Maximum number of retry attempts per pool
   MAX_RETRIES: 3,
 
-  // Enable request ID tracking for debugging
-  TRACK_REQUESTS: true,
+  // Enable request ID tracking for debugging (kept false for minimal passthrough)
+  TRACK_REQUESTS: false,
 
   // Custom headers to inject into all requests (optional)
   INJECT_HEADERS: {
     // Example: "X-Forwarded-By": "cloudflare-lb"
   },
 
-  // Remove these hop-by-hop headers from origin responses
-  REMOVE_HEADERS: [
-    "host",
-    "content-length",
-    "accept-encoding",
-    "transfer-encoding",
+  // Hop-by-hop headers to strip from outgoing requests
+  REMOVE_REQUEST_HEADERS: [
     "connection",
-    "upgrade",
+    "proxy-connection",
+    "keep-alive",
+    "transfer-encoding",
     "te",
     "trailer",
+    "upgrade",
+    "host", // let fetch set host based on origin URL
+  ],
+
+  // Hop-by-hop headers to strip from origin responses
+  REMOVE_RESPONSE_HEADERS: [
+    "connection",
+    "proxy-connection",
+    "keep-alive",
+    "transfer-encoding",
+    "te",
+    "trailer",
+    "upgrade",
   ],
 
   // Health check endpoints available at: /{HEALTH_CHECK_PATH}
@@ -269,10 +280,30 @@ function validateConfiguration() {
 function sanitizeHeaders(headers) {
   const h = new Headers(headers);
 
-  // Remove hop-by-hop headers
-  CONFIG.REMOVE_HEADERS.forEach((header) => {
+  // Remove hop-by-hop headers only; keep content-length and accept-encoding
+  CONFIG.REMOVE_REQUEST_HEADERS.forEach((header) => {
     h.delete(header);
   });
+
+  return h;
+}
+
+/**
+ * Sanitizes response headers by removing hop-by-hop headers and set-cookie
+ * (Set-Cookie is re-appended explicitly via forwardSetCookieHeaders)
+ * @param {Headers} headers - Origin response headers
+ * @returns {Headers} Sanitized headers
+ */
+function sanitizeResponseHeaders(headers) {
+  const h = new Headers(headers);
+
+  // Remove hop-by-hop headers only; preserve content-length and location
+  CONFIG.REMOVE_RESPONSE_HEADERS.forEach((header) => {
+    h.delete(header);
+  });
+
+  // Set-Cookie will be forwarded explicitly if present
+  h.delete("set-cookie");
 
   return h;
 }
@@ -508,8 +539,8 @@ async function handleRequest(request) {
 
         try {
           // Build the proxied URL
-          const originUrl =
-            selectedOrigin.url + url.pathname + url.search + url.hash;
+          // Build origin URL (exclude fragment/hash, it is not sent to servers)
+          const originUrl = selectedOrigin.url + url.pathname + url.search;
 
           // Prepare headers: sanitize incoming headers
           const headers = sanitizeHeaders(request.headers);
@@ -524,10 +555,7 @@ async function handleRequest(request) {
             headers.set(key, value);
           });
 
-          // Add request ID header for tracking
-          if (requestId) {
-            headers.set("X-Request-ID", requestId);
-          }
+          // Do not add extra tracking headers when forwarding
 
           // Prepare request body
           let body = null;
@@ -537,16 +565,14 @@ async function handleRequest(request) {
 
           // Create fetch request with timeout
           const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            selectedOrigin.timeout
-          );
+          let timeoutId;
 
           const fetchInit = {
             method: request.method,
             headers,
             body,
-            redirect: "follow",
+            // Use manual redirect so client receives 3xx and Location, preserving URL changes
+            redirect: "manual",
             signal: controller.signal,
           };
 
@@ -557,6 +583,10 @@ async function handleRequest(request) {
           });
 
           const startOriginTime = Date.now();
+          timeoutId = setTimeout(
+            () => controller.abort(),
+            selectedOrigin.timeout
+          );
           const response = await fetch(originUrl, fetchInit);
           clearTimeout(timeoutId);
 
@@ -569,27 +599,17 @@ async function handleRequest(request) {
             responseTime: `${originTime}ms`,
           });
 
-          // Handle Set-Cookie headers (they must be forwarded specially)
-          const responseHeaders = new Headers(response.headers);
+          // Sanitize response headers and handle Set-Cookie specially
+          const responseHeaders = sanitizeResponseHeaders(response.headers);
           const hasCookies = [...response.headers.keys()].some(
             (k) => k.toLowerCase() === "set-cookie"
           );
 
           if (hasCookies) {
-            responseHeaders.delete("set-cookie");
             forwardSetCookieHeaders(response.headers, responseHeaders);
           }
 
-          // Add request tracking header
-          if (requestId) {
-            responseHeaders.set("X-Request-ID", requestId);
-          }
-
-          responseHeaders.set(
-            "X-Served-By",
-            new URL(selectedOrigin.url).hostname
-          );
-          responseHeaders.set("X-Response-Time", `${originTime}ms`);
+          // Do not mutate response headers beyond required sanitation
 
           const totalTime = Date.now() - startTime;
           log("INFO", "Response prepared and ready to send", {
@@ -603,6 +623,7 @@ async function handleRequest(request) {
             headers: responseHeaders,
           });
         } catch (err) {
+          if (timeoutId) clearTimeout(timeoutId);
           const originTime = Date.now() - startTime;
           log("WARN", `Origin request failed: ${err.message}`, {
             requestId,
