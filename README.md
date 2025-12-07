@@ -56,14 +56,19 @@
 
 ## About The Project
 
-This project implements an advanced load balancer using [Cloudflare Workers](https://developers.cloudflare.com/workers/). It proxies requests to multiple origin servers, supporting weighted routing, backup origins, and disabled origins. The configuration is managed in a single JavaScript file (`worker.js`).
+This repository contains a Cloudflare Worker that implements an advanced HTTP load balancer. It proxies requests to multiple origin servers and includes features useful for production deployments:
 
-**Key Features:**
+- Weighted routing and weighted random selection of primary origins
+- Backup origins (used only if primary origins fail)
+- Temporarily disable origins without removing them
+- Per-origin and global timeouts
+- Automatic retries and configurable failure handling
+- Health check and stats endpoints (/health and /\_lb/stats)
+- Sanitize request/response headers and forward Set-Cookie headers properly
+- Prevents self-proxying (skips origins that match the worker hostname)
+- Configurable debug logging and request tracking
 
-- Weighted random selection of primary origins
-- Automatic failover to backup origins
-- Easy configuration of enabled/disabled origins
-- Simple deployment to Cloudflare's edge network
+Configuration is handled in `worker.js` using a top-level `ORIGINS` array and a `CONFIG` object. The worker is designed to be deployed to Cloudflare's edge network using the Wrangler CLI.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -128,6 +133,42 @@ npm install -g wrangler
    wrangler publish
    ```
 
+### Testing Locally
+
+You can use Wrangler to run the worker locally and test with requests before publishing:
+
+```sh
+# Start a local development instance
+wrangler dev
+
+# Or run a single request in development mode
+curl http://127.0.0.1:8787/health
+```
+
+Use `wrangler dev --remote` to test against your Cloudflare account and bindings.
+
+### Configuration
+
+Open `worker.js` and update the `ORIGINS` array and `CONFIG` object to match your deployment needs. Key configuration options include:
+
+- ORIGINS: Array of origin objects. Each origin supports:
+  - url (string): Required origin URL (https://...)
+  - weight (number): Relative weight for routing (default: 1)
+  - backup (boolean): Mark origin as a backup (default: false)
+  - enabled (boolean): Enable / disable the origin (default: true)
+  - timeout (number): Per-origin timeout in milliseconds (default: 10000)
+  - headers (object): Custom headers to add to proxied requests
+- CONFIG: Global settings including:
+  - DEBUG: Enable verbose logging (development only)
+  - DEFAULT_TIMEOUT: Global default timeout for requests
+  - MAX_RETRIES: Maximum retries per pool
+  - TRACK_REQUESTS: Enable request ID tracking for debugging
+  - INJECT_HEADERS: Global headers to inject into all proxied requests
+  - HEALTH_CHECK_PATH: Path for health checks (default: `health`)
+  - STATS_PATH: Path for stats (default: `_lb/stats`)
+
+Example `ORIGINS` and `CONFIG` snippets can be found in `worker.js`.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Usage
@@ -165,6 +206,29 @@ const ORIGINS = [
 - If all primary origins fail, backup origins are tried.
 - If all attempts fail, a 502 Bad Gateway response is returned.
 
+### More details
+
+- The worker strips hop-by-hop headers and can inject custom headers globally or per-origin.
+- Set-Cookie headers from origin responses are forwarded explicitly (cloudflare worker header handling limitation).
+- The worker tracks request IDs when enabled in `CONFIG.TRACK_REQUESTS` to assist debugging.
+- A `validateConfiguration()` check runs on startup (errors are logged but the worker still starts; it's helpful for local validation before publishing).
+
+For more details, see the code and comments in [`worker.js`](./worker.js).
+
+## Health Check & Stats Endpoints
+
+- Health Check: GET /{HEALTH_CHECK_PATH} (default `/health`) — Returns 200 OK if at least one origin is enabled. Response includes timestamp and origin counts.
+- Stats: GET /{STATS_PATH} (default `/_lb/stats`) — Returns JSON with current configuration and origins statuses (weights, enabled/backup flags).
+
+Example:
+
+```sh
+curl https://your-worker.example.workers.dev/health
+curl https://your-worker.example.workers.dev/_lb/stats
+```
+
+These endpoints are useful for monitoring and integration with health check systems like UptimeRobot or external load balancers.
+
 For more details, see the code and comments in [`worker.js`](./worker.js).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -189,7 +253,7 @@ Contributions are welcome! Please fork the repository and submit a pull request,
 
 ## License
 
-Distributed under the MIT License. See [`LICENSE`](./LICENSE) for more information.
+Distributed under the Apache License 2.0. See [`LICENSE`](./LICENSE) for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -205,6 +269,14 @@ Project Link: [https://github.com/LoveDoLove/cloudflare-load-balancer](https://g
 
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+
+## Security & Notes
+
+- Avoid committing secrets or API keys to the repository; use environment variables or Cloudflare Secrets/Workers KV for sensitive values.
+- Set-Cookie headers are forwarded explicitly, but review cookie security flags (Secure, HttpOnly, SameSite) at your origin before proxying.
+- When using `CONFIG.DEBUG = true`, logs may expose internal state. Keep DEBUG off for production.
+
+If you need a custom build or extensions, feel free to open an issue describing the feature.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
