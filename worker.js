@@ -323,6 +323,37 @@ function forwardSetCookieHeaders(originHeaders, targetHeaders) {
 }
 
 /**
+ * Rewrites Location headers so users stay on the public hostname.
+ * If an origin responds with a redirect pointing to the origin host,
+ * rewrite it to the original request host to avoid leaking origin URLs
+ * or bouncing users between hostnames.
+ *
+ * @param {string} locationValue - Location header from origin response
+ * @param {string} requestUrl - Original request URL seen by the Worker
+ * @param {string} originUrl - URL used to contact the selected origin
+ * @returns {string} A possibly rewritten Location header
+ */
+function rewriteLocation(locationValue, requestUrl, originUrl) {
+  try {
+    const requestHostUrl = new URL(requestUrl);
+    const originHostUrl = new URL(originUrl);
+    const locationUrl = new URL(locationValue, originUrl);
+
+    // Only rewrite when the redirect points back to the origin host.
+    if (locationUrl.hostname === originHostUrl.hostname) {
+      locationUrl.hostname = requestHostUrl.hostname;
+      locationUrl.port = requestHostUrl.port;
+      locationUrl.protocol = requestHostUrl.protocol;
+    }
+
+    return locationUrl.toString();
+  } catch (err) {
+    // If parsing fails, return the original value unchanged.
+    return locationValue;
+  }
+}
+
+/**
  * Selects an origin server using weighted random selection
  *
  * Algorithm:
@@ -604,6 +635,25 @@ async function handleRequest(request) {
           const hasCookies = [...response.headers.keys()].some(
             (k) => k.toLowerCase() === "set-cookie"
           );
+
+          // Ensure redirects keep the public hostname instead of exposing origins
+          const locationHeader = responseHeaders.get("location");
+          if (locationHeader) {
+            const rewrittenLocation = rewriteLocation(
+              locationHeader,
+              request.url,
+              originUrl
+            );
+
+            if (rewrittenLocation !== locationHeader) {
+              responseHeaders.set("Location", rewrittenLocation);
+              log("DEBUG", "Rewrote redirect location to client host", {
+                requestId,
+                original: locationHeader,
+                rewritten: rewrittenLocation,
+              });
+            }
+          }
 
           if (hasCookies) {
             forwardSetCookieHeaders(response.headers, responseHeaders);
