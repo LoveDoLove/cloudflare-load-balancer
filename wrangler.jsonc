@@ -7,6 +7,7 @@
 	"name": "cloudflare-load-balancer",
 	"main": "src/index.js",
 	"compatibility_date": "2026-01-03",
+	"routes": [{ "pattern": "server1.example.com/*", "custom_domain": false, "zone_name": "example.com" }],
 	"observability": {
 		"enabled": true
 	},
@@ -14,7 +15,7 @@
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
 	 */
-	"placement": {  "mode": "smart" },
+	"placement": { "mode": "smart" },
 	/**
 	 * Bindings
 	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
