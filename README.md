@@ -62,16 +62,17 @@
 
 ## About The Project
 
-This repository contains a high-performance Cloudflare Worker that implements an advanced HTTP load balancer. It proxies requests to multiple origin servers with features designed for reliability and flexibility.
+This project provides a robust, production-ready Cloudflare Worker that acts as a high-performance HTTP load balancer. It allows you to distribute traffic across multiple origin servers based on configurable weights, with built-in support for failover to backup servers and maintenance modes.
 
 Key Features:
 
-- **Weighted Routing**: Distribute traffic across primary origins using configurable weights.
-- **Automatic Failover**: Seamlessly switch to backup origins if all primary origins fail.
-- **Origin Management**: Temporarily disable origins or adjust timeouts without code changes via environment variables.
-- **Health & Stats**: Built-in endpoints for monitoring system status and configuration.
-- **Header Sanitization**: Properly handles hop-by-hop headers and cookie forwarding.
-- **Request Tracking**: Optional tracking IDs for end-to-end debugging.
+- **Weighted Random Selection**: Distribute traffic proportionally across primary origins.
+- **Automatic Failover**: Seamlessly routes traffic to backup origins if primary origins are unavailable or return errors.
+- **Dynamic Configuration**: Configure origins, weights, timeouts, and headers via environment variables.
+- **Health Monitoring**: Built-in `/health` and `/_lb/stats` endpoints for real-time status updates.
+- **Header & Cookie Handling**: Accurate forwarding of request/response headers and `Set-Cookie` support.
+- **Request Tracking**: Optional unique request IDs for end-to-end troubleshooting.
+- **Security-First**: Sanitizes hop-by-hop headers and prevents origin URL leakage through Location header rewriting.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -87,9 +88,11 @@ Key Features:
 
 ## Getting Started
 
-To deploy this load balancer, you'll need a Cloudflare account and the Wrangler CLI.
+To get your load balancer up and running, follow these steps.
 
 ### Prerequisites
+
+You need the following installed:
 
 - Node.js and npm
   ```sh
@@ -110,8 +113,8 @@ To deploy this load balancer, you'll need a Cloudflare account and the Wrangler 
    ```sh
    npm install
    ```
-3. Update `wrangler.jsonc` with your configuration.
-4. Deploy the worker
+3. Update your origin configuration in `wrangler.jsonc` (see [Usage](#usage)).
+4. Deploy to Cloudflare
    ```sh
    npm run deploy
    ```
@@ -122,22 +125,33 @@ To deploy this load balancer, you'll need a Cloudflare account and the Wrangler 
 
 ## Usage
 
-The load balancer is configured via the `ORIGINS_CONFIG` environment variable in `wrangler.jsonc`. This variable accepts a JSON string array of origin objects.
+The load balancer is primarily configured through the `ORIGINS_CONFIG` variable in `wrangler.jsonc`. This allows you to update your infrastructure without redeploying code.
 
-Example configuration in `wrangler.jsonc`:
+### Configuration Schema
+
+An origin object can have the following properties:
+
+| Property  | Type      | Default      | Description                                         |
+| :-------- | :-------- | :----------- | :-------------------------------------------------- |
+| `url`     | `string`  | **Required** | The destination origin URL (must include protocol). |
+| `weight`  | `number`  | `1`          | Relative traffic weight (higher = more traffic).    |
+| `backup`  | `boolean` | `false`      | If true, only used if all primary origins fail.     |
+| `enabled` | `boolean` | `true`       | Quickly enable/disable an origin.                   |
+| `timeout` | `number`  | `10000`      | Request timeout in milliseconds.                    |
+| `headers` | `object`  | `{}`         | Custom headers to inject for this specific origin.  |
+
+### Example `wrangler.jsonc`
 
 ```json
 "vars": {
-  "ORIGINS_CONFIG": "[{\"url\":\"https://s1.example.com\",\"weight\":3,\"enabled\":true,\"timeout\":10000},{\"url\":\"https://s2.example.com\",\"weight\":1},{\"url\":\"https://backup.example.com\",\"backup\":true}]"
+  "ORIGINS_CONFIG": "[{\"url\":\"https://primary-1.example.com\",\"weight\":3},{\"url\":\"https://primary-2.example.com\",\"weight\":1},{\"url\":\"https://backup.example.com\",\"backup\":true}]"
 }
 ```
 
-### Endpoints
+### Stats and Health
 
-- `/health`: Returns 200 OK if at least one origin is healthy.
-- `/_lb/stats`: Returns current stats and configuration in JSON format.
-
-_For more examples, please refer to the [Documentation](https://github.com/LoveDoLove/cloudflare-load-balancer)_
+- **Health Check**: `GET /health` - Returns 200 OK if the system is functional.
+- **System Stats**: `GET /_lb/stats` - Returns detailed information about current configuration and origin pools.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -176,7 +190,7 @@ Distributed under the Apache License 2.0. See `LICENSE` for more information.
 
 ## Contact
 
-LoveDoLove - [GitHub](https://github.com/LoveDoLove)
+LoveDoLove - [GitHub](https://github.com/LoveDoLove) - [Discord](https://discord.com/invite/FyYEmtRCRE)
 
 Project Link: [https://github.com/LoveDoLove/cloudflare-load-balancer](https://github.com/LoveDoLove/cloudflare-load-balancer)
 
