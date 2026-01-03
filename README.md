@@ -88,86 +88,62 @@ To deploy this load balancer, you need a Cloudflare account and access to [Cloud
 - [Node.js](https://nodejs.org/) (for local development and using Wrangler CLI)
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) (Cloudflare's Worker deployment tool)
 
-Install Wrangler globally:
+Install dependencies:
 
 ```sh
-npm install -g wrangler
+npm install
 ```
 
-### Installation
+### Installation & Deployment
 
-1. Clone the repository:
+1. **Fork/Clone** the repository:
    ```sh
    git clone https://github.com/LoveDoLove/cloudflare-load-balancer.git
    cd cloudflare-load-balancer
    ```
-2. Configure your origins in `worker.js`:
-   ```js
-   const ORIGINS = [
-     {
-       url: "https://server1.example.com",
-       weight: 3,
-       backup: false,
-       enabled: true,
-     },
-     {
-       url: "https://server2.example.com",
-       weight: 1,
-       backup: false,
-       enabled: true,
-     },
-     {
-       url: "https://server3.example.com",
-       weight: 1,
-       backup: true,
-       enabled: true,
-     },
-   ];
+2. **Rename the Project**:
+   Update the `name` field in `wrangler.jsonc` to your preferred Worker name (e.g., `"my-lb"`).
+3. **Configure Origins**:
+   Open `wrangler.jsonc` and update the `ORIGINS_CONFIG` variable under the `vars` section. This is a JSON string containing your origin servers.
+   ```jsonc
+   "vars": {
+     "ORIGINS_CONFIG": "[{\"url\":\"https://server1.example.com\",\"weight\":3},{\"url\":\"https://server2.example.com\",\"weight\":1},{\"url\":\"https://server3.example.com\",\"backup\":true}]"
+   }
    ```
-3. Authenticate Wrangler with your Cloudflare account:
+4. **Login & Deploy**:
    ```sh
-   wrangler login
+   npx wrangler login
+   npm run deploy
    ```
-4. Publish the Worker:
-   ```sh
-   wrangler publish
-   ```
+5. **Set Custom Domain (Optional)**:
+   In the Cloudflare Dashboard, go to your Worker -> **Triggers** -> **Custom Domains** and add your domain (e.g., `lb.yourdomain.com`).
 
 ### Testing Locally
 
-You can use Wrangler to run the worker locally and test with requests before publishing:
+You can run the worker locally using Vitest or Wrangler dev:
 
 ```sh
-# Start a local development instance
-wrangler dev
+# Run the test suite
+npm test
 
-# Or run a single request in development mode
-curl http://127.0.0.1:8787/health
+# Start local dev server
+npm start
 ```
 
-Use `wrangler dev --remote` to test against your Cloudflare account and bindings.
+### Configuration Details
 
-### Configuration
+The project uses Cloudflare Workers **Module syntax**. All logic is in `src/index.js`, which dynamically reads origins from the environment.
 
-Open `worker.js` and update the `ORIGINS` array and `CONFIG` object to match your deployment needs. Key configuration options include:
+- **ORIGINS_CONFIG**: A JSON string array of origin objects.
 
-- ORIGINS: Array of origin objects. Each origin supports:
-  - url (string): Required origin URL (https://...)
-  - weight (number): Relative weight for routing (default: 1)
-  - backup (boolean): Mark origin as a backup (default: false)
-  - enabled (boolean): Enable / disable the origin (default: true)
-  - timeout (number): Per-origin timeout in milliseconds (default: 10000)
-  - headers (object): Custom headers to add to proxied requests
-- CONFIG: Global settings including:
-  - DEBUG: Enable verbose logging (development only)
-  - DEFAULT_TIMEOUT: Global default timeout for requests
-  - MAX_RETRIES: Maximum retries per pool
-  - TRACK_REQUESTS: Enable request ID tracking for debugging
-  - INJECT_HEADERS: Global headers to inject into all proxied requests
-  - HEALTH_CHECK_PATH: Path for health checks (default: `health`)
-  - STATS_PATH: Path for stats (default: `_lb/stats`)
+  - `url` (string): **Required**. The backend server URL.
+  - `weight` (number): Traffic weight (default: 1).
+  - `backup` (boolean): Use only if primary origins fail (default: false).
+  - `enabled` (boolean): Enable/disable the origin (default: true).
+  - `timeout` (number): Milliseconds to wait (default: 10000).
+  - `headers` (object): Custom headers for this origin.
 
-Example `ORIGINS` and `CONFIG` snippets can be found in `worker.js`.
+- **Global CONFIG**: Internal constants in `src/index.js` control debug logging, health check paths, and retry counts.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -179,24 +155,24 @@ Once deployed, the Worker will automatically proxy incoming requests to your con
 
 ```js
 const ORIGINS = [
-  {
-    url: "https://server1.example.com",
-    weight: 3,
-    backup: false,
-    enabled: true,
-  },
-  {
-    url: "https://server2.example.com",
-    weight: 1,
-    backup: false,
-    enabled: true,
-  },
-  {
-    url: "https://server3.example.com",
-    weight: 1,
-    backup: true,
-    enabled: true,
-  },
+	{
+		url: 'https://server1.example.com',
+		weight: 3,
+		backup: false,
+		enabled: true,
+	},
+	{
+		url: 'https://server2.example.com',
+		weight: 1,
+		backup: false,
+		enabled: true,
+	},
+	{
+		url: 'https://server3.example.com',
+		weight: 1,
+		backup: true,
+		enabled: true,
+	},
 ];
 ```
 
