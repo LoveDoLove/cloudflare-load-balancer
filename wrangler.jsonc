@@ -29,7 +29,7 @@
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
 	"vars": {
-		"ORIGINS_CONFIG": "[{\"url\":\"https://server1.example.com\",\"weight\":3},{\"url\":\"https://server2.example.com\",\"weight\":1},{\"url\":\"https://server3.example.com\",\"backup\":true}]"
+		"ORIGINS_CONFIG": "[{\"url\":\"https://server1.example.com\",\"weight\":3,\"enabled\":true,\"timeout\":10000},{\"url\":\"https://server2.example.com\",\"weight\":1},{\"url\":\"https://server3.example.com\",\"backup\":true}]"
 	}
 	/**
 	 * Static Assets
